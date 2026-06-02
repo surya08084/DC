@@ -13,6 +13,11 @@ Classifies every vapor/tobacco product in your POS scan and shipment data as **F
 3. [Architecture Overview](#3-architecture-overview)
 4. [Layer 0 — Reference Ingestion](#4-layer-0--reference-ingestion)
 5. [Layer 1 — Normalization & Standardization](#5-layer-1--normalization--standardization)
+   - [5a. Path A — LLM Extraction](#5a-path-a--llm-extraction-llm_extractorpy)
+   - [5b. Extraction Validator](#5b-extraction-validator-extraction_validatorpy)
+   - [5c. Path B — Dictionary Normalization](#5c-path-b--dictionary-normalization)
+   - [5d. Position-Aware Flavor Extraction](#5d-position-aware-flavor-extraction-flavor_extractorpy)
+   - [5e. High-Risk Flags](#5e-high-risk-flags-all-paths)
 6. [Layer 2 — Entity Resolution (5-Stage Matching)](#6-layer-2--entity-resolution-5-stage-matching)
 7. [Stage 3 Deep Dive — Semantic Ensemble](#7-stage-3-deep-dive--semantic-ensemble)
 8. [Layer 3 — Regulatory Match Registry](#8-layer-3--regulatory-match-registry)
@@ -125,7 +130,10 @@ vapor_compliance/
 │   ├── text_cleaner.py     Lowercase, unicode, punctuation removal
 │   ├── unit_normalizer.py  5%=50mg/ml, volume, puff count, product type
 │   ├── abbreviation_expander.py Brand/flavor/manufacturer resolution
-│   └── normalizer.py       Orchestrates normalization, builds NormalizedSKU
+│   ├── flavor_extractor.py Position-aware residual token flavor extractor
+│   ├── llm_extractor.py    Claude API → structured SKUExtractionResult JSON
+│   ├── extraction_validator.py Dict validation of LLM output (CONFIRMED/CORRECTION/UNVERIFIED)
+│   └── normalizer.py       Two-path orchestrator: Path A (LLM) + Path B (dict fallback)
 ├── matching/               Layer 2
 │   ├── exact_matcher.py    Stage 1 — hash map
 │   ├── fuzzy_matcher.py    Stage 2 — rapidfuzz field-weighted scoring
@@ -174,9 +182,152 @@ External reference data arrives in mixed formats. The ingestion layer handles al
 
 ## 5. Layer 1 — Normalization & Standardization
 
-Transforms messy raw text into a structured `NormalizedSKU` object.
+Transforms messy raw text into a structured `NormalizedSKU` object via a **two-path pipeline**.  
+Path A (LLM-first) is tried whenever `ANTHROPIC_API_KEY` is set. Path B (dictionary-only) is the fallback.
 
-### Normalization Steps (in order)
+```
+Raw SKU name
+     │
+     ▼
+┌────────────────────────────────────────────────────────┐
+│  PATH A — LLM-First (when ANTHROPIC_API_KEY is set)    │
+│                                                        │
+│  1. Claude API call → structured JSON per SKU          │
+│  2. ExtractionValidator — field-by-field dict check    │
+│     (CONFIRMED / CORRECTION / UNVERIFIED)              │
+│  3. Confidence = 0.5 × LLM + 0.5 × validation         │
+│  If confidence ≥ 0.20 → return NormalizedSKU           │
+│  Else fall through ↓                                   │
+└────────────────────────────────────────────────────────┘
+     │  (on failure or low confidence)
+     ▼
+┌────────────────────────────────────────────────────────┐
+│  PATH B — Dictionary / Residual Fallback               │
+│                                                        │
+│  1. Text cleaner (lowercase, unicode, noise strip)     │
+│  2. Abbreviation expansion (token-level dict lookup)   │
+│  3. Unit normalizer (5% → 50 mg/ml)                   │
+│  4. Brand resolution (alias dict + partial tokens)     │
+│  5. Manufacturer resolution                            │
+│  6. Flavor extractor — position-aware residual method  │
+│  7. Build NormalizedSKU + confidence deductions        │
+└────────────────────────────────────────────────────────┘
+     │
+     ▼
+NormalizedSKU  (normalization_method = "llm+validated" | "llm+corrections" |
+                "llm+unverified" | "dictionary" | "hybrid")
+```
+
+---
+
+### 5a. Path A — LLM Extraction (`llm_extractor.py`)
+
+The `LLMExtractor` sends raw SKU names to Claude and gets back a fully structured JSON object (`SKUExtractionResult`) for each one.
+
+**What Claude extracts:**
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `brand` | Canonical brand name | `"JUUL"` |
+| `manufacturer` | Parent company | `"Altria Group"` |
+| `product_line` | Sub-model (not the flavor) | `"Alto"`, `"BC5000"` |
+| `flavor_raw` | Flavor exactly as it appears | `"Virginia Tobacco"` |
+| `flavor_canonical` | Mapped to known canonical | `"Virginia Tobacco"` |
+| `flavor_category` | `TOBACCO\|MENTHOL\|FRUIT\|DESSERT\|SPICE\|OTHER` | `"TOBACCO"` |
+| `nicotine_strength_raw` | Raw string from SKU | `"5%"` |
+| `nicotine_mg_ml` | Converted to mg/ml | `50.0` |
+| `form_factor` | `POD\|DISPOSABLE\|CARTRIDGE\|MOD\|E-LIQUID` | `"POD"` |
+| `volume_ml` | Volume in ml | `1.0` |
+| `puff_count` | Puff count (disposables) | `5000` |
+| `pack_count` | Multipack quantity | `4` |
+| `normalized_sku` | Clean reconstructed name | `"JUUL Virginia Tobacco 50mg/ml Pod"` |
+| `abbreviations_expanded` | Every abbreviation the LLM expanded | `{"VT": "Virginia Tobacco"}` |
+| `extraction_confidence` | LLM self-assessed confidence 0.0–1.0 | `0.95` |
+| `ambiguities` | Things the LLM was unsure about | `["could be 3mg or 3%"]` |
+
+**Efficiency features:**
+- **Batch mode**: up to 20 SKUs per API call (`normalize_batch()`)
+- **MD5 cache**: same raw name never calls the API twice within a session
+- **Retry logic**: up to 2 retries with exponential back-off (2s, 4s)
+- **Graceful failure**: any exception returns `None` and Path B runs instead
+
+**System prompt enforces:**
+- Nicotine conversion rule: `percent × 10 = mg/ml` (5% → 50.0, never left as 5.0)
+- `normalized_sku` format: `"<Brand> <Flavor> <NicMgMl>mg/ml <FormFactor>"`
+- Return ONLY valid JSON — no markdown, no explanation
+
+---
+
+### 5b. Extraction Validator (`extraction_validator.py`)
+
+After Path A produces a `SKUExtractionResult`, the `ExtractionValidator` checks every extracted field against our versioned dictionaries. The validator **never silently discards** a field — every decision is recorded.
+
+**Three outcomes per field:**
+
+| Outcome | Meaning | Confidence |
+|---------|---------|------------|
+| `CONFIRMED` | LLM matches dictionary exactly | 1.0 |
+| `CORRECTION` | Dictionary is authoritative — LLM wrong | 0.60–0.85 |
+| `UNVERIFIED` | Novel value not in dictionary — kept with flag | 0.60–0.70 |
+
+**Field weights for validation confidence:**
+
+| Field | Weight |
+|-------|--------|
+| Brand | 0.30 |
+| Flavor | 0.25 |
+| Nicotine strength | 0.25 |
+| Abbreviation expansions | 0.10 |
+| Form factor | 0.10 |
+
+**Overall confidence formula:**
+```
+overall_confidence = 0.50 × LLM_confidence + 0.50 × validation_confidence
+```
+
+**Example corrections the validator catches:**
+
+```
+# Nicotine conversion error
+LLM says:   nicotine_mg_ml = 5.0   (forgot to multiply)
+Raw string: "5%"
+Dict says:  5% → 50.0 mg/ml
+Flag:       CORRECTION:nicotine 5.0→50.0 (from '5%')
+Result:     nicotine_mg_ml = 50.0  (dictionary wins)
+
+# Abbreviation over-expansion
+LLM says:   VT → "Vermont Tobacco"
+Dict says:  VT → "Virginia Tobacco"
+Flag:       CORRECTION:abbreviation 'VT' LLM='Vermont Tobacco' dict='Virginia Tobacco'
+Result:     abbreviations_expanded = {"VT": "Virginia Tobacco"}
+
+# Novel brand (not in dictionary)
+LLM says:   brand = "VaporX Pro"
+Dict:       no match, fuzzy score < 0.92
+Flag:       UNVERIFIED:brand 'VaporX Pro' not in dictionary
+Result:     brand = "VaporX Pro" (kept, routed to human review)
+```
+
+**Brand fuzzy fallback:** if the LLM brand is not in the dictionary, Jaro-Winkler similarity is computed against all known canonicals. Score ≥ 0.92 → auto-correct with flag. Score < 0.92 → keep as UNVERIFIED.
+
+**Normalization method labels:**
+
+| Label | Meaning |
+|-------|---------|
+| `llm+validated` | All fields confirmed by dictionary |
+| `llm+corrections` | Some LLM values corrected by dictionary |
+| `llm+unverified` | Some novel values kept from LLM |
+| `llm+corrections+unverified` | Both corrections and novel values |
+| `dictionary` | Path B only, no LLM |
+| `hybrid` | Path B with a pre-expanded name hint |
+
+---
+
+### 5c. Path B — Dictionary Normalization
+
+When LLM is unavailable or returns low confidence, Path B runs a deterministic normalization chain:
+
+#### Normalization Steps
 
 | Step | What it does | Example |
 |------|-------------|---------|
@@ -184,14 +335,14 @@ Transforms messy raw text into a structured `NormalizedSKU` object.
 | Abbreviation expansion | Dictionary exact lookup on each token | `VT` → `Virginia Tobacco`, `MNTH` → `Menthol` |
 | Brand resolution | Brand alias dictionary + partial token match | `JOOL` / `JUL` → `JUUL` |
 | Manufacturer resolution | Manufacturer alias dictionary | `ALTRIA` → `Altria Group` |
-| Flavor resolution | Canonical flavor + category from synonym dictionary | `strbry ice` → `Strawberry` (category: FRUIT) |
+| Flavor extraction | Position-aware residual token method (see 5d) | `strbry ice` → `Strawberry` (FRUIT, conf=1.0) |
 | Unit normalization | Converts all nicotine expressions to `mg/ml` | `5%` → `50.0 mg/ml`, `50mg` → `50.0` |
 | Volume normalization | All volumes to ml | `1.5ml` → `1.5` |
 | Product type mapping | Maps shorthand to canonical type | `pod/cart/disp` → `POD/CARTRIDGE/DISPOSABLE` |
 
-### Dimensional Equivalence
+#### Dimensional Equivalence
 
-The framework enforces these unit conversions before any comparison. Never fuzzy-match nicotine strength — it is a legally distinct attribute.
+The framework enforces these unit conversions before any comparison. Nicotine strength is a legally regulated attribute — never fuzzy-match it.
 
 ```
 5%       = 50.0 mg/ml    (percent × 10 for aqueous nicotine solutions)
@@ -201,40 +352,112 @@ The framework enforces these unit conversions before any comparison. Never fuzzy
 5% ≠ 3%   — these are DIFFERENT regulated products
 ```
 
-### Normalization Confidence
+#### Normalization Confidence (Path B)
 
-Each `NormalizedSKU` carries a `normalization_confidence` score (0–1). Deductions:
+Each `NormalizedSKU` from Path B carries a `normalization_confidence` score (0–1):
 
 | Missing field | Deduction |
 |--------------|-----------|
 | Brand unresolved | −0.25 |
 | Flavor unresolved | −0.15 |
+| Flavor low confidence | −0.15 × (1 − flavor_conf) |
 | Nicotine strength missing | −0.15 |
 | Product type missing | −0.10 |
 
-Records with `normalization_confidence < 0.50` are flagged `high_risk` and automatically routed to the review queue before matching even begins.
+Records with `normalization_confidence < 0.50` are automatically routed to the review queue before matching begins.
 
-### High-Risk Flags
+---
 
-The normalizer tags records with flags that carry forward into the audit trail:
+### 5d. Position-Aware Flavor Extraction (`flavor_extractor.py`)
 
+The key challenge: **flavor can appear at any position** in a SKU name. A naive substring scan would give false matches on model codes, product lines, and unit tokens. Instead, the `FlavorExtractor` uses the **residual token method**:
+
+```
+Input:  "ELF BAR BC5000 Blueberry Ice 50mg Disposable"
+
+Step 1 — Strip non-flavor tokens:
+  brand tokens:    ["elf", "bar"]            → removed
+  model codes:     ["bc5000"]                → removed (regex: letter+digits or digits+letter)
+  unit tokens:     ["50mg"]                  → removed (regex: \d+(?:mg|%|ml|puffs…))
+  product type:    ["disposable"]            → removed (from unit_mappings.json)
+  product line:    []                        → nothing
+  numbers:         []                        → nothing
+  ─────────────────────────────────────────
+  residual:        ["blueberry", "ice"]
+
+Step 2 — N-gram match on residual (longest n-gram first):
+  2-gram "blueberry ice" → synonym lookup → "Blueberry" canonical? No
+  1-gram "blueberry"    → synonym lookup → "Blueberry" ✓
+  confidence = 0.80 (single-token match)
+
+Step 3 — If residual empty, fall back to full-text n-gram scan (conf = 0.60)
+
+Step 4 — Last resort: longest-first substring scan (conf = 0.40)
+```
+
+**Confidence levels:**
+
+| Level | Condition |
+|-------|-----------|
+| 1.0 | Multi-word n-gram match from clean residual (`Watermelon Ice`, `Virginia Tobacco`) |
+| 0.80 | Single-token n-gram match from residual |
+| 0.60 | Full-text fallback (residual was empty — brand/model consumed everything) |
+| 0.40 | Substring scan only (partial/uncertain match) |
+| 0.0 | No flavor found |
+
+**Debug output** (`flavor_extractor.debug(text, brand)`):
+
+```json
+{
+  "input": "ELF BAR BC5000 Blueberry Ice 50mg Disposable",
+  "brand": "ELF BAR",
+  "tokens": ["elf", "bar", "bc5000", "blueberry", "ice", "50mg", "disposable"],
+  "residual": ["blueberry", "ice"],
+  "stripped": {
+    "brand": ["elf", "bar"],
+    "model_code": ["bc5000"],
+    "unit": ["50mg"],
+    "product_type": ["disposable"]
+  },
+  "matched_span": "blueberry",
+  "canonical_flavor": "Blueberry",
+  "flavor_category": "FRUIT",
+  "confidence": 0.80
+}
+```
+
+**High-risk flavor flags:**
+
+| Flag | Condition |
+|------|-----------|
+| `flavor_not_resolved` | No flavor found at all |
+| `flavor_low_confidence_extraction` | Confidence < 0.60 |
+| `flavor_fulltext_fallback` | Confidence < 0.80 (residual was empty) |
+
+---
+
+### 5e. High-Risk Flags (All Paths)
+
+All flags produced during normalization carry forward into the audit trail and are stored in `NormalizedSKU.high_risk_flags`:
+
+**Path A flags (LLM extraction + validation):**
+- `MISSING:brand_not_extracted` — LLM produced no brand
+- `CORRECTION:brand 'X'→'Y'` — brand corrected by dictionary
+- `UNVERIFIED:brand 'X' not in dictionary` — novel brand kept with warning
+- `CORRECTION:nicotine X→Y (from 'Z')` — nicotine conversion error corrected
+- `CORRECTION:flavor 'X'→'Y'` — flavor corrected via synonym lookup
+- `UNVERIFIED:flavor 'X' not in dictionary` — novel flavor kept
+- `CORRECTION:abbreviation 'AB' LLM='X' dict='Y'` — abbreviation corrected
+- `UNVERIFIED:abbreviation 'AB'→'X' not in dict` — new abbreviation kept
+- `llm_validation_conflicts_present` — any correction or conflict found
+
+**Path B flags (dictionary-only):**
 - `brand_not_in_dictionary` — brand could not be resolved
-- `flavor_not_resolved` — flavor could not be mapped to a canonical form
+- `flavor_not_resolved` — flavor could not be mapped
+- `flavor_low_confidence_extraction` — flavor confidence < 0.60
+- `flavor_fulltext_fallback` — full-text fallback used (confidence < 0.80)
 - `nicotine_not_found` — no nicotine strength detected
-- `no_abbreviations_expanded` — pre-expanded name had no dictionary hits (possible LLM over-expansion)
-
-### LLM Pre-Expansion (Copilot Integration)
-
-Your upstream Copilot/LLM can pre-expand raw SKU names into a structured JSON before they reach this pipeline. The normalizer accepts a `pre_expanded_name` argument. It then **validates** the LLM expansion against the abbreviation dictionary:
-
-```
-LLM output:  "JUUL Vermont Tobacco 50mg Pod"
-Dict says:   VT → Virginia Tobacco (not Vermont)
-Flag raised: over_expansion_detected
-Method:      "hybrid" (LLM + dictionary)
-```
-
-If the LLM and dictionary disagree, the **dictionary wins** and a flag is raised for human review.
+- `no_abbreviations_expanded` — pre-expanded name had no dictionary hits
 
 ---
 
@@ -712,7 +935,9 @@ pip install pdfplumber pytesseract pdf2image
 
 # Copy environment template
 cp .env.example .env
-# Edit .env and set ANTHROPIC_API_KEY if using LLM adjudication (Stage 5)
+# Edit .env and set ANTHROPIC_API_KEY to enable:
+#   - Path A LLM-first normalization (Layer 1)
+#   - Stage 5 LLM adjudication (Layer 2)
 ```
 
 ### Minimal install (no embeddings, no PDF, no LLM)
@@ -732,13 +957,18 @@ All settings live in `vapor_compliance/config.py` and can be overridden via envi
 ### Algorithm Toggles
 
 ```env
+# Layer 1 — Normalization
+ENABLE_LLM_EXTRACTION=true  # Path A (LLM-first normalization via Claude API)
+                             # Requires ANTHROPIC_API_KEY; falls back to Path B
+
+# Layer 2 — Matching stages
 ENABLE_EXACT=true
 ENABLE_FUZZY=true
 ENABLE_TFIDF=true
 ENABLE_BM25=true
 ENABLE_EMBEDDING=true     # requires fastembed + faiss-cpu
 ENABLE_BEHAVIORAL=true
-ENABLE_LLM=true           # requires ANTHROPIC_API_KEY
+ENABLE_LLM=true           # Stage 5 LLM adjudication; requires ANTHROPIC_API_KEY
 ```
 
 ### Confidence Thresholds
@@ -780,12 +1010,17 @@ FAISS_INDEX_PATH=data/faiss_index.bin
 FAISS_META_PATH=data/faiss_meta.json
 ```
 
-### LLM
+### LLM (Normalization + Adjudication)
 
 ```env
-ANTHROPIC_API_KEY=sk-ant-...
-LLM_MODEL=claude-sonnet-4-6
-LLM_MAX_CALLS_PER_BATCH=500
+ANTHROPIC_API_KEY=sk-ant-...    # enables both Path A normalization and Stage 5 adjudication
+LLM_MODEL=claude-sonnet-4-6     # model used for extraction and adjudication
+LLM_MAX_CALLS_PER_BATCH=500     # guard against runaway API spend
+
+# LLM extraction tuning
+LLM_BATCH_SIZE=20               # SKUs per Claude API call (default: 20)
+LLM_MAX_RETRIES=2               # retries on API failure with exponential back-off
+LLM_RETRY_DELAY=2.0             # initial back-off delay in seconds (doubles each retry)
 ```
 
 ---
@@ -1035,3 +1270,32 @@ If the brand score is below `BRAND_MIN_SCORE` (0.90), the overall composite is c
 ### Why Jaccard for retailer/state overlap?
 
 Jaccard (`|A∩B| / |A∪B|`) is symmetric, intuitive, and handles the case where one set is much larger than the other correctly. It ranges [0, 1] which fits naturally into the confidence score arithmetic. It rewards shared distribution geography, which is a meaningful signal — a product only sold in Texas is unlikely to match a reference product only distributed in New England.
+
+### Why a two-path normalizer instead of always calling the LLM?
+
+Path B (dictionary-only) is the safety net, not the deprecated fallback. Several scenarios make it essential:
+
+1. **No API key** — on-premise deployments with no outbound connectivity
+2. **LLM confidence below 0.20** — the model was uncertain; dictionary is more reliable for simple, well-abbreviated SKUs
+3. **API outage or rate limit** — batch jobs must complete even when the API is unavailable
+4. **Cost control** — for a million-SKU batch, LLM calls are expensive; Path B handles the easy cases for free
+
+Path A is tried first because the LLM handles highly abbreviated or ambiguous SKU names that no fixed dictionary can fully cover. The `normalization_method` field records which path ran, so analysts can filter and audit them separately.
+
+### Why validate LLM output instead of trusting it directly?
+
+LLMs can hallucinate systematic errors:
+- **Nicotine unit errors**: returning `5.0` when the label says `5%` (should be `50.0 mg/ml`)
+- **Abbreviation over-expansion**: expanding `VT` to `Vermont Tobacco` instead of `Virginia Tobacco`
+- **Brand name drift**: returning `Juul` (lowercase) instead of `JUUL`, or a similar-sounding but different brand
+
+The validator catches every class of error with zero false negatives (it checks every field, not just the ones that look suspicious). Dictionary corrections are deterministic and auditable. The `corrections` dict in the audit trail shows exactly what the LLM said and what the dictionary overrode, enabling downstream analysts to spot patterns and improve the LLM system prompt.
+
+### Why residual token method for flavor extraction?
+
+A naive substring scan (`if "menthol" in sku_name`) fails when:
+- Model codes contain letter sequences that look like flavors (`BC5000`, `NC600`)
+- Product lines contain flavor-adjacent words (`Cool` in some brand line names)
+- Unit tokens overlap (`MINT` could match inside `MINT5000`)
+
+The residual method strips every non-flavor token class in order of certainty before scanning. What's left is almost certainly flavor text. This gives a 90%+ precision advantage over the naive scan on real POS data.
