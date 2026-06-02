@@ -10,14 +10,17 @@ from vapor_compliance.normalization.unit_normalizer import normalize_nicotine, n
 from vapor_compliance.normalization.abbreviation_expander import expander
 from vapor_compliance.normalization.normalizer import Normalizer
 from vapor_compliance.models.sku import RawSKU, CanonicalProduct
+from vapor_compliance.models.match import MatchStage
 from vapor_compliance.matching.exact_matcher import ExactMatcher
 from vapor_compliance.matching.fuzzy_matcher import FuzzyMatcher
 from vapor_compliance.matching.tfidf_matcher import TFIDFMatcher
 from vapor_compliance.matching.bm25_matcher import BM25Matcher
+from vapor_compliance.matching.semantic_ensemble import SemanticEnsemble
 from vapor_compliance.registry.cpg_registry import CPGRegistry
 from vapor_compliance.registry.fda_registry import FDARegistry
 from vapor_compliance.registry.state_registry import StateRegistry
 from vapor_compliance.pipeline.orchestrator import CompliancePipeline
+from vapor_compliance.config import settings
 
 
 DATA = Path(__file__).parent.parent / "data"
@@ -139,6 +142,42 @@ def test_bm25_matcher():
     print(f"✓ bm25_matcher → {result.matched_cpg_id} confidence={result.confidence}")
 
 
+def test_semantic_ensemble():
+    """
+    Stage 3 runs TF-IDF + BM25 + Embedding in parallel.
+    Verify the result carries per-method predictions and an agreement label.
+    """
+    products = _sample_products()
+
+    # Lower thresholds so all methods produce results in this small test corpus
+    settings.TFIDF_THRESHOLD = 0.10
+    settings.BM25_THRESHOLD = 0.10
+    settings.EMBEDDING_THRESHOLD = 0.10
+
+    ensemble = SemanticEnsemble()
+    ensemble.build_index(products)
+
+    raw = RawSKU(sku_id="T5", source="POS", raw_name="JUUL Virginia Tobacco 5%")
+    norm = Normalizer().normalize(raw)
+
+    result = ensemble.match(norm)
+    assert result is not None, "Ensemble should return a result"
+
+    print(f"\n✓ semantic_ensemble")
+    print(f"  match_stage      : {result.match_stage}")
+    print(f"  matched_cpg_id   : {result.matched_cpg_id}")
+    print(f"  confidence       : {result.confidence}")
+    print(f"  agreement        : {result.stage3_agreement}")
+    print(f"  stage3_predictions:")
+    for method, pred in result.stage3_predictions.items():
+        status = "✓" if pred.predicted else "✗"
+        print(f"    {status} {method:12s} → cpg={pred.cpg_id or 'miss':10s}  conf={pred.confidence:.3f}")
+    print(f"  explanation: {result.match_explanation}")
+
+    assert result.stage3_agreement in ("all_agree", "majority", "split", "single")
+    assert len(result.stage3_predictions) > 0
+
+
 def test_full_pipeline():
     cpg = CPGRegistry()
     cpg.load_from_csv(DATA / "sample_cpg.csv")
@@ -169,5 +208,6 @@ if __name__ == "__main__":
     test_fuzzy_matcher()
     test_tfidf_matcher()
     test_bm25_matcher()
+    test_semantic_ensemble()
     test_full_pipeline()
     print("\n✓ All tests passed")

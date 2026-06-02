@@ -145,7 +145,13 @@ def get_summary(
 
 @app.get("/algorithms/status", response_model=AlgorithmStatusResponse)
 def algorithm_status():
-    """Show which matching stages are currently enabled."""
+    """
+    Show which matching stages are enabled.
+
+    Stage 3 (Semantic Ensemble) runs whichever of tfidf/bm25/embedding are enabled
+    IN PARALLEL and combines via voting. Toggle individual Stage 3 members to control
+    which methods participate in the ensemble.
+    """
     return AlgorithmStatusResponse(
         ENABLE_EXACT=settings.ENABLE_EXACT,
         ENABLE_FUZZY=settings.ENABLE_FUZZY,

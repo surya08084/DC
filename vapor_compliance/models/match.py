@@ -7,12 +7,20 @@ from enum import Enum
 class MatchStage(str, Enum):
     EXACT = "exact"
     FUZZY = "fuzzy"
-    TFIDF = "tfidf"
+    SEMANTIC_ENSEMBLE = "semantic_ensemble"   # Stage 3: tfidf+bm25+embedding combined
+    TFIDF = "tfidf"                           # Stage 3 solo (when only one method enabled)
     BM25 = "bm25"
     EMBEDDING = "embedding"
     BEHAVIORAL = "behavioral"
     LLM = "llm"
     NO_MATCH = "no_match"
+
+
+class Stage3Prediction(BaseModel):
+    """Individual prediction from one Stage 3 method."""
+    cpg_id: Optional[str] = None
+    confidence: float = 0.0
+    predicted: bool = False        # True if this method produced a result above threshold
 
 
 class FieldScore(BaseModel):
@@ -34,4 +42,8 @@ class MatchResult(BaseModel):
     matched_source: str = ""
     is_review_required: bool = False
     candidates_considered: int = 0
-    stage_scores: dict[str, float] = {}    # score at each stage attempted
+    stage_scores: dict[str, float] = {}         # score at each stage attempted
+
+    # Stage 3 ensemble breakdown — shows each method's individual prediction
+    stage3_predictions: dict[str, Stage3Prediction] = {}
+    stage3_agreement: str = ""   # "all_agree" | "majority" | "split" | "single" | ""
