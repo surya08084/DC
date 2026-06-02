@@ -4,6 +4,7 @@ from ..models.sku import RawSKU, NormalizedSKU
 from .text_cleaner import clean, tokenize
 from .unit_normalizer import extract_all
 from .abbreviation_expander import expander
+from .flavor_extractor import flavor_extractor
 
 
 class Normalizer:
@@ -27,8 +28,11 @@ class Normalizer:
         brand = expander.resolve_brand(expanded_text)
         manufacturer = expander.resolve_manufacturer(raw.manufacturer or expanded_text)
 
-        # Flavor resolution
-        flavor_canonical, flavor_category = expander.resolve_flavor(expanded_text)
+        # Flavor extraction — residual token method (position-aware)
+        # Passes the resolved brand so brand tokens are correctly stripped
+        # before flavor n-gram matching begins.
+        flavor_canonical, flavor_category, flavor_span, flavor_conf = \
+            flavor_extractor.extract(expanded_text, brand=brand)
 
         # High-risk flags
         flags: list[str] = []
@@ -36,17 +40,24 @@ class Normalizer:
             flags.append("brand_not_in_dictionary")
         if flavor_canonical is None:
             flags.append("flavor_not_resolved")
+        elif flavor_conf < 0.60:
+            flags.append("flavor_low_confidence_extraction")
+        elif flavor_conf < 0.80:
+            flags.append("flavor_fulltext_fallback")
         if units["nicotine_mg_ml"] is None:
             flags.append("nicotine_not_found")
         if pre_expanded_name and not expansions:
             flags.append("no_abbreviations_expanded")
 
-        # Confidence: reduce per missing critical field
+        # Confidence: reduce per missing or uncertain field
         confidence = 1.0
         if not brand:
             confidence -= 0.25
         if flavor_canonical is None:
             confidence -= 0.15
+        elif flavor_conf < 1.0:
+            # Partial penalty for uncertain flavor extraction
+            confidence -= 0.15 * (1.0 - flavor_conf)
         if units["nicotine_mg_ml"] is None:
             confidence -= 0.15
         if units["product_type"] is None:

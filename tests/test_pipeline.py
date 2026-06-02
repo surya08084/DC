@@ -178,6 +178,67 @@ def test_semantic_ensemble():
     assert len(result.stage3_predictions) > 0
 
 
+def test_flavor_extractor():
+    """
+    Validate residual token method on real-world tricky SKU patterns.
+    Each case has flavor at a different position and with different noise.
+    """
+    from vapor_compliance.normalization.flavor_extractor import flavor_extractor
+
+    cases = [
+        # (raw_name, brand, expected_canonical, description)
+        ("JUUL Virginia Tobacco 5%",              "JUUL",     "Virginia Tobacco", "brand flavor nic — standard"),
+        ("NJOY ACE Virginia Tobacco 50mg Pod",    "NJOY",     "Virginia Tobacco", "brand + product-line before flavor"),
+        ("ELF BAR BC5000 Watermelon Ice 50mg",    "ELF BAR",  "Watermelon",       "brand + model-code before flavor"),
+        ("GEEK BAR Pulse 15000 Strawberry Ice 5%","GEEK BAR", "Strawberry",       "brand + line + puff-count before flavor"),
+        ("HYDE Edge Recharge Rainbow Candy 5%",   "HYDE",     None,               "novel flavor not in dict — ok to miss"),
+        ("VUSE Alto Original Tobacco 50mg Pod",   "VUSE",     "Virginia Tobacco", "Original Tobacco → Virginia Tobacco"),
+        ("LOST VAPE Orion Bar 10000 Mango Ice 5%","LOST VAPE","Mango",            "long model name + puff count"),
+        ("FUME EXTRA Mint 5%",                    "FUME",     "Menthol",          "product-line Extra, Mint → Menthol"),
+        ("BLU Menthol 24mg Cartridge",            "BLU",      "Menthol",          "flavor immediately after brand"),
+        ("PUFF BAR Blue Razz 5%",                 None,       None,               "unknown brand + unknown flavor"),
+    ]
+
+    print("\n✓ flavor_extractor — residual token method")
+    print(f"  {'SKU':<45} {'Expected':<20} {'Got':<20} {'Conf':>5}  {'Strip Method'}")
+    print("  " + "─" * 115)
+
+    for raw_name, brand, expected, desc in cases:
+        canonical, category, span, conf = flavor_extractor.extract(raw_name, brand=brand)
+        match_sym = "✓" if canonical == expected else ("~" if canonical and expected and expected in (canonical or "") else "✗")
+        if expected is None:
+            match_sym = "–"
+        print(
+            f"  {match_sym} {raw_name:<43} "
+            f"exp={str(expected):<18} "
+            f"got={str(canonical):<18} "
+            f"conf={conf:.2f}  [{desc}]"
+        )
+
+    # Hard assertions on cases where we must get it right
+    c, _, _, _ = flavor_extractor.extract("NJOY ACE Virginia Tobacco 50mg Pod", brand="NJOY")
+    assert c == "Virginia Tobacco", f"Expected Virginia Tobacco, got {c}"
+
+    c, _, _, _ = flavor_extractor.extract("ELF BAR BC5000 Watermelon Ice 50mg", brand="ELF BAR")
+    assert c == "Watermelon", f"Expected Watermelon, got {c}"
+
+    c, _, _, _ = flavor_extractor.extract("GEEK BAR Pulse 15000 Strawberry Ice 5%", brand="GEEK BAR")
+    assert c == "Strawberry", f"Expected Strawberry, got {c}"
+
+    c, _, _, _ = flavor_extractor.extract("JUUL Virginia Tobacco 5%", brand="JUUL")
+    assert c == "Virginia Tobacco", f"Expected Virginia Tobacco, got {c}"
+
+    c, _, _, _ = flavor_extractor.extract("BLU Menthol 24mg Cartridge", brand="BLU")
+    assert c == "Menthol", f"Expected Menthol, got {c}"
+
+    print("\n  Debug trace for ELF BAR BC5000 Watermelon Ice 50mg:")
+    dbg = flavor_extractor.debug("ELF BAR BC5000 Watermelon Ice 50mg", brand="ELF BAR")
+    print(f"    tokens    : {dbg['tokens']}")
+    print(f"    stripped  : {dbg['stripped']}")
+    print(f"    residual  : {dbg['residual']}")
+    print(f"    matched   : '{dbg['matched_span']}' → {dbg['canonical_flavor']} (conf={dbg['confidence']:.2f})")
+
+
 def test_full_pipeline():
     cpg = CPGRegistry()
     cpg.load_from_csv(DATA / "sample_cpg.csv")
@@ -203,6 +264,7 @@ if __name__ == "__main__":
     test_text_cleaner()
     test_unit_normalizer()
     test_abbreviation_expander()
+    test_flavor_extractor()
     test_normalizer()
     test_exact_matcher()
     test_fuzzy_matcher()
