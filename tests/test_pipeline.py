@@ -9,6 +9,8 @@ from vapor_compliance.normalization.text_cleaner import clean, tokenize
 from vapor_compliance.normalization.unit_normalizer import normalize_nicotine, normalize_volume, extract_all
 from vapor_compliance.normalization.abbreviation_expander import expander
 from vapor_compliance.normalization.normalizer import Normalizer
+from vapor_compliance.normalization.llm_extractor import SKUExtractionResult
+from vapor_compliance.normalization.extraction_validator import ExtractionValidator
 from vapor_compliance.models.sku import RawSKU, CanonicalProduct
 from vapor_compliance.models.match import MatchStage
 from vapor_compliance.matching.exact_matcher import ExactMatcher
@@ -77,11 +79,106 @@ def test_abbreviation_expander():
 def test_normalizer():
     norm = Normalizer()
     raw = RawSKU(sku_id="TEST_001", source="POS", raw_name="JOOL VT POD 5%")
-    result = norm.normalize(raw)
+    # use_llm=False forces dictionary path so test works without API key
+    result = norm.normalize(raw, use_llm=False)
     assert result.raw_sku_id == "TEST_001"
     assert result.nicotine_mg_ml == 50.0
     assert result.product_type == "POD"
-    print(f"✓ normalizer → normalized_name='{result.normalized_name}', confidence={result.normalization_confidence}")
+    print(f"✓ normalizer (dict path) → normalized_name='{result.normalized_name}', confidence={result.normalization_confidence}")
+
+
+def test_extraction_validator():
+    """
+    Test the dictionary validation layer against simulated LLM outputs.
+    No API call needed — we construct SKUExtractionResult directly.
+    """
+    v = ExtractionValidator()
+
+    # ── Case 1: LLM output is correct and confirmed by dict ───────────────────
+    ext1 = SKUExtractionResult(
+        raw_name="JOOL VT POD 5%",
+        brand="JUUL",
+        flavor_raw="Virginia Tobacco",
+        flavor_canonical="Virginia Tobacco",
+        nicotine_strength_raw="5%",
+        nicotine_mg_ml=50.0,
+        form_factor="Pod",
+        normalized_sku="JUUL Virginia Tobacco 50mg Pod",
+        abbreviations_expanded={"JOOL": "JUUL", "VT": "Virginia Tobacco"},
+        extraction_confidence=0.95,
+    )
+    r1 = v.validate(ext1)
+    assert r1.brand == "JUUL"
+    assert r1.flavor_canonical == "Virginia Tobacco"
+    assert r1.nicotine_mg_ml == 50.0
+    corrections = [f for f in r1.flags if f.startswith("CORRECTION")]
+    assert len(corrections) == 0, f"Unexpected corrections: {corrections}"
+    print(f"\n✓ validator case1 — confirmed: conf={r1.overall_confidence:.2f} flags={r1.flags}")
+
+    # ── Case 2: LLM got nicotine conversion wrong ─────────────────────────────
+    ext2 = SKUExtractionResult(
+        raw_name="NJOY ACE 5% Pod",
+        brand="NJOY",
+        flavor_raw="Virginia Tobacco",
+        flavor_canonical="Virginia Tobacco",
+        nicotine_strength_raw="5%",
+        nicotine_mg_ml=5.0,          # LLM forgot ×10 conversion
+        form_factor="POD",
+        normalized_sku="NJOY Virginia Tobacco 5mg Pod",
+        abbreviations_expanded={},
+        extraction_confidence=0.88,
+    )
+    r2 = v.validate(ext2)
+    assert r2.nicotine_mg_ml == 50.0, f"Expected 50.0 after correction, got {r2.nicotine_mg_ml}"
+    assert any("CORRECTION:nicotine" in f for f in r2.flags)
+    print(f"✓ validator case2 — nicotine corrected 5→50: flags={r2.flags}")
+
+    # ── Case 3: LLM expanded abbreviation differently from dictionary ──────────
+    ext3 = SKUExtractionResult(
+        raw_name="JOOL VT POD 5%",
+        brand="JUUL",
+        flavor_raw="Vermont Tobacco",
+        flavor_canonical="Vermont Tobacco",   # LLM over-expanded VT → Vermont
+        nicotine_strength_raw="5%",
+        nicotine_mg_ml=50.0,
+        form_factor="POD",
+        normalized_sku="JUUL Vermont Tobacco 50mg Pod",
+        abbreviations_expanded={"VT": "Vermont Tobacco"},   # dict says Virginia
+        extraction_confidence=0.82,
+    )
+    r3 = v.validate(ext3)
+    abbr_correction = [f for f in r3.flags if "abbreviation" in f and "CORRECTION" in f]
+    assert len(abbr_correction) > 0, f"Expected abbreviation correction, flags: {r3.flags}"
+    assert r3.abbreviations_expanded.get("VT") == "Virginia Tobacco"
+    print(f"✓ validator case3 — abbr VT→Vermont corrected to Virginia Tobacco: flags={r3.flags}")
+
+    # ── Case 4: Novel brand not in dictionary ─────────────────────────────────
+    ext4 = SKUExtractionResult(
+        raw_name="VAPEX Pro Mango Ice 5%",
+        brand="VAPEX",                        # new brand, not in dict
+        flavor_raw="Mango Ice",
+        flavor_canonical="Mango",
+        nicotine_strength_raw="5%",
+        nicotine_mg_ml=50.0,
+        form_factor="DISPOSABLE",
+        normalized_sku="VAPEX Mango 50mg Disposable",
+        abbreviations_expanded={},
+        extraction_confidence=0.78,
+    )
+    r4 = v.validate(ext4)
+    assert r4.brand == "VAPEX"                # kept, not in dict
+    assert any("UNVERIFIED:brand" in f for f in r4.flags)
+    print(f"✓ validator case4 — novel brand kept with flag: flags={r4.flags}")
+
+    # ── Summary table ─────────────────────────────────────────────────────────
+    print("\n  Validation summary:")
+    for label, r in [("confirmed", r1), ("nic_corrected", r2), ("abbr_corrected", r3), ("novel_brand", r4)]:
+        print(
+            f"  {label:<18} llm={r.llm_confidence:.2f}  "
+            f"val={r.validation_confidence:.2f}  "
+            f"overall={r.overall_confidence:.2f}  "
+            f"needs_review={r.needs_review}"
+        )
 
 
 def test_exact_matcher():
@@ -265,6 +362,7 @@ if __name__ == "__main__":
     test_unit_normalizer()
     test_abbreviation_expander()
     test_flavor_extractor()
+    test_extraction_validator()
     test_normalizer()
     test_exact_matcher()
     test_fuzzy_matcher()
