@@ -1,0 +1,11 @@
+cpg_id,fda_match_flag,fda_match_id,pmta_order_number,authorized_manufacturer,confidence,effective_from,effective_to,marketing_granted
+CP0001,True,FDA_99123,PM0003236,JUUL Labs,1.0,2021-06-23,,True
+CP0002,True,FDA_99124,PM0003237,JUUL Labs,1.0,2021-06-23,,True
+CP0003,True,FDA_99125,PM0003238,JUUL Labs,1.0,2021-06-23,,True
+CP0004,True,FDA_88201,PM0004501,NJOY LLC,1.0,2023-04-12,,True
+CP0005,True,FDA_88202,PM0004502,NJOY LLC,1.0,2023-04-12,,True
+CP0006,True,FDA_77301,PM0005801,RJ Reynolds Vapor,1.0,2021-10-18,,True
+CP0007,True,FDA_77302,PM0005802,RJ Reynolds Vapor,1.0,2021-10-18,,True
+CP0008,True,FDA_66101,PM0006901,Imperial Brands,1.0,2022-03-15,,True
+CP0009,False,,,ELF BAR,0.0,,,False
+CP0010,False,,,GEEK BAR,0.0,,,False

@@ -1,0 +1,36 @@
+{
+  "canonical_flavors": {
+    "Virginia Tobacco": ["virginia tobacco", "vt", "vir tob", "virginia tob", "classic tobacco", "original tobacco", "rich tobacco", "american tobacco", "gold tobacco", "golden tobacco", "ry4", "premium tobacco"],
+    "Menthol": ["menthol", "mint", "cool mint", "arctic mint", "polar mint", "icy mint", "glacier mint", "spearmint", "peppermint", "fresh mint", "menthol ice", "arctic ice", "glacier ice", "cool ice", "frozen mint"],
+    "Mango": ["mango", "mango ice", "tropical mango", "sweet mango", "mango nectar", "mango tango", "mango madness"],
+    "Strawberry": ["strawberry", "strawberry ice", "strawberry cream", "wild strawberry", "fresh strawberry", "strawberry banana", "strbry", "strby"],
+    "Blueberry": ["blueberry", "blueberry ice", "wild blueberry", "blueberry mint", "mixed berry"],
+    "Watermelon": ["watermelon", "watermelon ice", "watermelon mint", "summer watermelon"],
+    "Cucumber": ["cucumber", "cool cucumber", "cucumber mint"],
+    "Peach": ["peach", "peach ice", "georgia peach", "fuzzy peach", "peach mango"],
+    "Grape": ["grape", "grape ice", "concord grape", "mixed grape", "grape mint"],
+    "Lemon": ["lemon", "lemon ice", "citrus lemon", "lemon mint", "lemonade"],
+    "Vanilla": ["vanilla", "vanilla custard", "vanilla cream", "french vanilla", "vanilla mint"],
+    "Caramel": ["caramel", "caramel tobacco", "caramel vanilla", "butterscotch"],
+    "Cinnamon": ["cinnamon", "cinnamon tobacco", "spicy cinnamon", "hot cinnamon"],
+    "Bubble Gum": ["bubble gum", "bubblegum", "gum", "sweet gum"],
+    "Tropical": ["tropical", "tropical ice", "tropical fruit", "exotic tropical", "tropical blend", "tropical mix"],
+    "Cream": ["cream", "creamy", "milk", "custard", "ice cream"],
+    "Berry": ["berry", "mixed berry", "berry ice", "berry blast", "berry mix"]
+  },
+  "flavor_categories": {
+    "MENTHOL": ["Menthol", "Cucumber"],
+    "TOBACCO": ["Virginia Tobacco"],
+    "FRUIT": ["Mango", "Strawberry", "Blueberry", "Watermelon", "Peach", "Grape", "Lemon", "Tropical", "Berry"],
+    "DESSERT": ["Vanilla", "Caramel", "Cream", "Bubble Gum"],
+    "SPICE": ["Cinnamon"]
+  },
+  "flavor_ban_categories": {
+    "CA": ["FRUIT", "DESSERT", "SPICE", "MENTHOL"],
+    "MA": ["FRUIT", "DESSERT", "SPICE", "MENTHOL"],
+    "NY": ["FRUIT", "DESSERT", "SPICE"],
+    "NJ": ["FRUIT", "DESSERT", "SPICE", "MENTHOL"],
+    "RI": ["FRUIT", "DESSERT", "SPICE", "MENTHOL"],
+    "UT": ["FRUIT", "DESSERT", "SPICE"]
+  }
+}

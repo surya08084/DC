@@ -1,0 +1,23 @@
+{
+  "JUUL Labs": ["juul labs", "juul lab", "juul inc", "juul laboratories"],
+  "Altria Group": ["altria", "altria group", "pm usa", "philip morris usa", "philip morris"],
+  "RJ Reynolds Vapor": ["rj reynolds", "rjr vapor", "rj reynolds vapor", "reynolds american"],
+  "Logic Technology": ["logic", "logic technology", "japan tobacco international"],
+  "Imperial Brands": ["imperial brands", "imperial tobacco", "fontem ventures"],
+  "British American Tobacco": ["bat", "british american tobacco", "bat inc"],
+  "China Tobacco": ["china tobacco", "cntc"],
+  "Shenzhen Smoore Technology": ["smoore", "vaporesso parent", "smoore tech"],
+  "Shenzhen IVPS Technology": ["smok parent", "ivps"],
+  "NJOY LLC": ["njoy llc", "njoy inc", "njoy"],
+  "ELF BAR": ["elf bar", "shenzhen imiracletech", "imiracle"],
+  "GEEK BAR": ["geek bar", "shenzhen geek bar"],
+  "LOST VAPE": ["lost vape", "shenzhen smoant"],
+  "VOOPOO": ["voopoo", "shenzhen woody vapes"],
+  "Uwell": ["uwell", "shenzhen uwell technology"],
+  "Aspire": ["aspire", "shenzhen sigelei"],
+  "Innokin": ["innokin", "shenzhen innokin"],
+  "Vaporesso": ["vaporesso", "shenzhen smoore"],
+  "Fume": ["fume", "fume usa"],
+  "Hyde": ["hyde", "hyde vape"],
+  "Puff Bar": ["puff bar", "cool clouds distribution"]
+}
