@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+data/faiss_index.bin
+data/faiss_meta.json
+.env

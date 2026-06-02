@@ -1,0 +1,35 @@
+{
+  "generic": [
+    "ace", "alto", "solo", "ciro", "vibe", "orbit",
+    "pulse", "edge", "recharge", "rebel", "bar", "stick",
+    "pro", "max", "ultra", "mega", "plus", "maxx", "mini",
+    "xl", "xxl", "x2", "v2", "go", "one", "tab", "pod",
+    "nord", "rpm", "gen", "drag", "smash", "flow",
+    "turbo", "boost", "charge", "light", "slim",
+    "series", "edition", "limited", "special",
+    "disposable", "rechargeable", "refillable"
+  ],
+  "brand_specific": {
+    "NJOY": ["ace", "daily", "loop"],
+    "VUSE": ["alto", "solo", "ciro", "vibe"],
+    "JUUL": ["classic"],
+    "ELF BAR": ["bc", "te", "nc", "lb", "af", "pi"],
+    "GEEK BAR": ["pulse", "meloso", "skyview", "glow"],
+    "HYDE": ["edge", "rebel", "retro", "curve", "mag", "id", "iq"],
+    "LOST VAPE": ["orion", "lyra", "centaurus"],
+    "SMOK": ["nord", "rpm", "novo", "stick", "mag", "fetch"],
+    "VOOPOO": ["drag", "vinci", "argus", "find"],
+    "UWELL": ["caliburn", "crown", "nunchaku", "valyrian"],
+    "FUME": ["extra", "ultra", "infinity", "unlimited"],
+    "BANG": ["xxl", "xl", "king"],
+    "PUFF BAR": ["flow", "plus", "xl"],
+    "FLUM": ["float", "pebble", "gio", "mi"],
+    "BREEZE": ["pro", "smoke", "plus"],
+    "AIR BAR": ["max", "lux", "pro", "diamond", "nex"],
+    "LOON": ["maxx", "halo"],
+    "DINNER LADY": ["vape", "pen"]
+  },
+  "size_keywords": [
+    "mini", "slim", "mega", "large", "small", "regular", "king", "full"
+  ]
+}

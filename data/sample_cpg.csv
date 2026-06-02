@@ -1,0 +1,11 @@
+cpg_id,canonical_name,brand,manufacturer,product_type,flavor_canonical,flavor_category,nicotine_mg_ml,volume_ml,puff_count,pack_count,form_factor,country_of_origin,source
+CP0001,JUUL Virginia Tobacco 50mg Pod,JUUL,JUUL Labs,POD,Virginia Tobacco,TOBACCO,50.0,0.7,,4,POD,USA,fda_mgo
+CP0002,JUUL Menthol 50mg Pod,JUUL,JUUL Labs,POD,Menthol,MENTHOL,50.0,0.7,,4,POD,USA,fda_mgo
+CP0003,JUUL Virginia Tobacco 30mg Pod,JUUL,JUUL Labs,POD,Virginia Tobacco,TOBACCO,30.0,0.7,,4,POD,USA,fda_mgo
+CP0004,NJOY ACE Virginia Tobacco 50mg Pod,NJOY,NJOY LLC,POD,Virginia Tobacco,TOBACCO,50.0,0.9,,4,POD,USA,fda_mgo
+CP0005,NJOY ACE Menthol 50mg Pod,NJOY,NJOY LLC,POD,Menthol,MENTHOL,50.0,0.9,,4,POD,USA,fda_mgo
+CP0006,VUSE Alto Original Tobacco 50mg Pod,VUSE,RJ Reynolds Vapor,POD,Virginia Tobacco,TOBACCO,50.0,1.8,,2,POD,USA,fda_mgo
+CP0007,VUSE Alto Menthol 50mg Pod,VUSE,RJ Reynolds Vapor,POD,Menthol,MENTHOL,50.0,1.8,,2,POD,USA,fda_mgo
+CP0008,BLU Menthol 24mg Cartridge,BLU,Imperial Brands,CARTRIDGE,Menthol,MENTHOL,24.0,1.6,,2,CARTRIDGE,USA,fda_mgo
+CP0009,ELF BAR BC5000 Watermelon Ice 50mg Disposable,ELF BAR,ELF BAR,DISPOSABLE,Watermelon,FRUIT,50.0,13.0,5000,,DISPOSABLE,China,state_dir
+CP0010,GEEK BAR Pulse Strawberry Ice 50mg Disposable,GEEK BAR,GEEK BAR,DISPOSABLE,Strawberry,FRUIT,50.0,16.0,15000,,DISPOSABLE,China,state_dir
